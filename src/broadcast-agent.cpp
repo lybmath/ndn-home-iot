@@ -1,4 +1,5 @@
 #include "broadcast-agent.hpp"
+#include "logger.hpp"
 #include <ndn-cxx/face.hpp>
 #include <ndn-cxx/security/key-chain.hpp>
 #include <ndn-cxx/mgmt/nfd/controller.hpp>
@@ -8,12 +9,10 @@ namespace iot {
 
 BroadcastAgent::BroadcastAgent(Face& face,
 			       KeyChain& keyChain,
-			       nfd::Controller& controller,
-			       const FailureCallback& onFailure)
+			       nfd::Controller& controller)
   : m_face(face)
   , m_keyChain(keyChain)
   , m_controller(controller)
-  , m_onFailure(onFailure)
 {
 }
 
@@ -34,7 +33,9 @@ BroadcastAgent::registerTopPrefix(const Name& prefix,
   m_controller.fetch<nfd::FaceQueryDataset>(
     filter,
     bind(&BroadcastAgent::registerPrefixToFaces, this, registerParameters, _1),
-    m_onFailure);
+    [] (uint32_t code, const std::string& reason) {
+      LOG_FAILURE("broadcast", "Error " << code << "when fetching multicast faces: " << reason);
+    });
 }
 
 void
@@ -42,16 +43,15 @@ BroadcastAgent::broadcast(const Interest& interest,
 			  const DataCallback& cbOnData)
 {
   auto onNack = [this] (const Interest& interest, const lp::Nack& nack) {
-    std::cerr << interest.getName() << std::endl;
-    std::cerr << "on nack broadcast: " << nack.getReason() << std::endl;
-    m_onFailure(0, "on nack" + interest.getName().toUri());
+    LOG_FAILURE("broadcast", "get nack [" << nack.getReason() << "]"
+		<< " for interset " << interest.getName());
   };
   auto onTimeout = [this] (const Interest& interest) {
-    std::cerr << "on timeout for broadcast " << interest.getName() << std::endl;
-    m_onFailure(0, "Time out when retrieving data by: " + interest.getName().toUri());
+    LOG_FAILURE("broadcast", "interest is timeout: " << interest.getName());
   };
 
   m_face.expressInterest(interest, cbOnData, onNack, onTimeout);
+  LOG_INTEREST_OUT(interest);
 }
 
 void
@@ -59,7 +59,8 @@ BroadcastAgent::registerPrefixToFaces(const nfd::ControlParameters& params,
 				      const std::vector<nfd::FaceStatus>& dataset)
 {
   if (dataset.empty()) {
-    return m_onFailure(0, "No multi-access faces available");
+    LOG_FAILURE("broadcast", "No multi-access face available");
+    return;
   }
 
   m_nRegs = dataset.size();
@@ -77,8 +78,8 @@ BroadcastAgent::registerPrefixToFaces(const nfd::ControlParameters& params,
         afterPrefixRegistration(prefix);
       },
       [this, prefix, faceStatus] (const nfd::ControlResponse& resp) {
-	m_onFailure(resp.getCode(),
-		  "fail in registering to " + faceStatus.getRemoteUri() + " " + resp.getText());
+	LOG_FAILURE("broadcast", "Error " << resp.getCode() << " in registering route to ["
+		    << faceStatus.getRemoteUri() << "]: " << resp.getText());
 	++m_nRegFailure;
         afterPrefixRegistration(prefix);
       });
@@ -95,7 +96,7 @@ BroadcastAgent::afterPrefixRegistration(const Name& prefix)
     this->setStrategy(prefix);
   }
   else {
-    m_onFailure(0, "Cannot register prefix for any face");
+    LOG_FAILURE("broadcast", "Cannot register prefix on any multicast face");
   }  
 }
 
@@ -109,9 +110,12 @@ BroadcastAgent::setStrategy(const Name& prefix)
   
   m_controller.start<nfd::StrategyChoiceSetCommand>(
     parameters,
-    bind([] {}),
+    bind([] {
+	LOG_INFO("Multicast faces are ready");
+      }),
     [this] (const nfd::ControlResponse& resp) {
-      m_onFailure(resp.getCode(), " when setting multicast strategy: " + resp.getText());
+      LOG_FAILURE("broadcast", "Error " << resp.getCode() << "when setting multicast strategy: "
+		  << resp.getText())
     });  
 }
 

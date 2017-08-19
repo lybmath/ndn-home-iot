@@ -1,4 +1,5 @@
 #include "device-controller.hpp"
+#include "logger.hpp"
 
 #include <ndn-cxx/encoding/block-helpers.hpp>
 #include <ndn-cxx/encoding/tlv.hpp>
@@ -13,6 +14,7 @@ DeviceController::DeviceController(const std::string& pin, const Name& name)
   , m_pin(pin)
   , m_faceMonitor(m_face)
 {
+  LOG_WELCOME("IoT Device Controller", m_name);
   registerCommandHandler("localhop", "probe-device",
 			 bind(&DeviceController::handleProbe, this, _1, _2),
 			 bind(&hmac::verifyInterest, _1, pin),
@@ -38,6 +40,7 @@ DeviceController::handleProbe(const ControlParameters& parameters,
       done(ControlResponse(code, reason).wireEncode());
     });
 
+  LOG_INFO("start monitor the face changes");
   m_faceMonitor.onNotification.connect(bind(&DeviceController::handleFaceCreation, this,
 					    _1, parameters.getName()));
   m_faceMonitor.start();
@@ -47,35 +50,32 @@ void
 DeviceController::handleFaceCreation(const nfd::FaceEventNotification& notification,
 				     const Name& name)
 {
-  std::cerr << "PROCESSING: " << notification << std::endl;
-
-  m_createdFaces.push_back(notification.getFaceId());
-  
   if (notification.getKind() == nfd::FACE_EVENT_CREATED &&
       notification.getFaceScope() != nfd::FACE_SCOPE_LOCAL &&
       notification.getFacePersistency() == nfd::FACE_PERSISTENCY_ON_DEMAND) {
 
-      auto onSuccess = [this] (const nfd::ControlParameters&) {
-	std::cerr << "SUCCESS" << std::endl;
-        
-      };
+      LOG_INFO("new notification of face creation: " << notification.getFaceId());
+      m_createdFaces.push_back(notification.getFaceId());
+
       auto onFailure = [] (const nfd::ControlResponse& resp) {
-	std::cerr << resp << std::endl;
+	LOG_FAILURE("register route", "Error " << resp.getCode()
+		    << " when registering rout to the created face: "
+		    << resp.getText());
       };
 
+      LOG_INFO("register " << name << "to face: " << notification.getFaceId());
       registerPrefixOnFace(name, notification.getFaceId(),
 			   bind(&DeviceController::applyForCertificate, this,
 				name, notification.getFaceId()),
 			   onFailure);
-    }
-    else {
-      std::cerr << "IGNORED: " << notification << std::endl;
     }  
 }
 
 void
 DeviceController::applyForCertificate(const Name& name, uint64_t faceId)
 {
+  LOG_STEP(2, "apply certificate from " << name);
+  
   security::Key key;
   try {
     key = m_identity.getDefaultKey();
@@ -99,31 +99,35 @@ DeviceController::handleApplyResponse(const Name& keyName, uint64_t faceId,
 {
   try {
     security::v2::Certificate anchorCert(content.blockFromValue());
-    std::cout << "anchor" << anchorCert << std::endl;
+    LOG_INFO("receive the anchor cert: " << anchorCert.getName());
 
     registerPrefixOnFace(keyName, faceId,
 			 bind(&DeviceController::requestCertificate, this,
 			      keyName),
 			 bind([] {
-			     std::cout << "register fail" << std::endl;
+			     LOG_FAILURE("register route", "fail");
 			   }));
  
   }
   catch (const tlv::Error& e) {
-    std::cout << e.what() << std::endl;
+    LOG_FAILURE("cert", " fail to parse anchor " << e.what());
   }
 }
 
 void
 DeviceController::requestCertificate(const Name& keyName)
 {
-  m_face.expressInterest(Interest(keyName),
+  LOG_STEP(3, "request for AS signed certificate " << keyName);
+  
+  Interest interest(keyName);
+  LOG_INTEREST_OUT(interest);
+  
+  m_face.expressInterest(interest,
 			 [this, keyName] (const Interest&, const Data& data) {
 			   auto key = m_identity.getKey(keyName);
 			   security::v2::Certificate cert(data);
-			   m_keyChain.addCertificate(key, cert);
-			   std::cout << "new cert installed:\n"
-				     << cert << std::endl;
+			   m_keyChain.setDefaultCertificate(key, cert);
+			   LOG_INFO("new cert installed " << cert.getName());
 			 },
 			 [] (const Interest&, const lp::Nack& nack) {
 			   std::cout << "install cert nack: "
@@ -178,9 +182,10 @@ DeviceController::packageAccessibleUris(const std::vector<nfd::FaceStatus>& data
 void
 DeviceController::onCertificateInterest(const Interest& interest)
 {
-  std::cout << "receive Interest: " << interest << std::endl;
+  LOG_INTEREST_IN(interest);
+
   if (hmac::verifyInterest(interest, m_pin)) {
-    std::cout << "signature does not match" << std::endl;
+    LOG_FAILURE("cert", "can not verify interest with hmac " << interest.getName());
     return;
   }
 
@@ -188,12 +193,6 @@ DeviceController::onCertificateInterest(const Interest& interest)
   auto certBlock = interestName[m_name.size() + 2].blockFromValue();
 
   security::v2::Certificate cert(certBlock);
-  try {
-    std::cout << cert << std::endl;
-  }
-  catch (const tlv::Error& e) {
-    std::cout << e.what() << std::endl;
-  }
 }
 
 } // namespace iot

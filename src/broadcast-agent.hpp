@@ -15,12 +15,9 @@ namespace iot {
 class BroadcastAgent
 {
 public:
-  typedef boost::function<void(uint32_t, const std::string&)> FailureCallback;
-  
   BroadcastAgent(Face& face,
 		 KeyChain& keyChain,
-		 nfd::Controller& controller,
-		 const FailureCallback& onFailure = bind([] {}));
+		 nfd::Controller& controller);
   
   void
   registerTopPrefix(const Name& prefix,
@@ -45,7 +42,6 @@ private:
   Face& m_face;
   KeyChain& m_keyChain;
   nfd::Controller& m_controller;
-  const FailureCallback& m_onFailure;
 
   int m_nRegs = 0;
   int m_nRegSuccess = 0;

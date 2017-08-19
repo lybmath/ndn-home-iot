@@ -1,4 +1,5 @@
 #include "authentication-server.hpp"
+#include "logger.hpp"
 
 #include <ndn-cxx/security/signing-helpers.hpp>
 
@@ -11,8 +12,10 @@ static const time::nanoseconds FACEURI_CANONIZE_TIMEOUT = time::milliseconds(100
 AuthenticationServer::AuthenticationServer(const Name& name)
   : Entity(name, true)
 {
+  LOG_WELCOME("Authentication Server", m_name);
+  
   m_agent.registerTopPrefix(PROBE_DEVICE_PREFIX);
-    
+
   registerCommandHandler("localhost", "add-device",
 			 bind(&AuthenticationServer::addDevice, this, _1, _2));
 }
@@ -22,8 +25,11 @@ AuthenticationServer::addDevice(const ControlParameters& params,
 				const ReplyWithContent& done)
 {
   if (params.hasName() || !params.hasPinCode()) {
+    LOG_FAILURE("invalid parameters", "NO PIN CODE or NAME IS PRESENT");
     return done(ControlResponse(0, "invalid parameters for add dev").wireEncode());
   }
+
+  LOG_STEP(1, "Probing the device who owns the pin code " << params.getPinCode());
 
   auto probeParameters = params;
   probeParameters.setName(m_name).unsetPinCode();
@@ -45,6 +51,8 @@ AuthenticationServer::handleProbeResponse(const Block& content,
 					  const ReplyWithContent& done,
 					  const std::string& pin)
 {
+  LOG_INFO("Get probe response");
+  
   Name devName;
   try {
     devName.wireDecode(content.get(tlv::Name));
@@ -64,12 +72,16 @@ AuthenticationServer::handleProbeResponse(const Block& content,
 
     auto cbDeviceConnected = bind(&AuthenticationServer::afterConnectToDevice, this,
 				  _1, devName, done);
+
+    LOG_INFO("Try to create face toward the device" << devName);
     connectToDevice(availableUris, cbDeviceConnected, done);  
   }
   catch (const tlv::Error& e) {
     return done(ControlResponse(3, e.what()).wireEncode());
   }
 
+  LOG_INFO("Be ready to certificate application from " << devName);
+    
   // ready for cert application
   registerCommandHandler(Name(m_name).append("apply-cert"), devName,
 			 bind(&AuthenticationServer::issueCertificate, this, _1, _2),
@@ -83,13 +95,14 @@ AuthenticationServer::connectToDevice(std::vector<std::string> pendingUris,
 				      const ReplyWithContent& done)
 {
   if (pendingUris.empty()) {
+    LOG_FAILURE("create face", "all provided uris are not accessible");
     return done(ControlResponse(4, "none device uris can be connected to!").wireEncode());
   }
 
   FaceUri uri(pendingUris.back());
   pendingUris.pop_back();
 
-  std::cout << "to canonize " << uri.toString() << std::endl;
+  LOG_INFO("Try " << uri);
   uri.canonize(bind(&AuthenticationServer::createFaceTowardDevice, this,
 		    _1, pendingUris, cbDeviceConnected, done),
 	       bind(&AuthenticationServer::connectToDevice, this,
@@ -117,6 +130,7 @@ AuthenticationServer::afterCreateFaceFailed(const nfd::ControlResponse& resp,
 					    const ReplyWithContent& done)
 {
   if (resp.getCode() == 409) {
+    LOG_INFO("face already exists");
     cbDeviceConnected(nfd::ControlParameters(resp.getBody()));
   }
   else {
@@ -129,22 +143,22 @@ AuthenticationServer::afterConnectToDevice(const nfd::ControlParameters& params,
 					   const Name& name,
 					   const ReplyWithContent& done)
 {
-  std::cerr << "Connected to Device " << params.getUri()
-	    << " --> " << params.getFaceId() << std::endl;
-
+  LOG_INFO("register device name " << name << " on created face: "
+	   << params.getUri() << " ( " << params.getFaceId() << " )");
+  
   m_createdFaces.push_back(params.getFaceId());
   
   registerPrefixOnFace(name, params.getFaceId(),
 		       [done] (const nfd::ControlParameters&) {
-			 std::cout << "face created" << std::endl;
+			 LOG_INFO("registration succeeds")
 			 done(ControlResponse(200, "ok").wireEncode());
 		       },
 		       [done, params] (const nfd::ControlResponse& resp) {
-			 std::cerr << "Error " << resp.getCode()
-				   << " when registering hub discovery prefix "
-				   << "for face " << params.getFaceId()
-				   << " (" << params.getUri()
-				   << "): " << resp.getText() << std::endl;
+			 LOG_FAILURE("register dev name", "Error "
+				     << resp.getCode()
+				     << "for face " << params.getFaceId()
+				     << " (" << params.getUri()
+				     << "): " << resp.getText());
 			 done(resp.wireEncode());
 		       });
 }
@@ -164,8 +178,10 @@ AuthenticationServer::issueCertificate(const ControlParameters& params,
   // std::cout << newCert << std::endl;
   
   //publishCertificate(anchorCert);
+  LOG_INFO("Publish certificate in local memory " << params.getName());
   publishCertificate(params.getName(), newCert);
 
+  LOG_INFO("Reply anchor certificate to the device " << anchorCert.getName());
   done(anchorCert.wireEncode());
   
   //auto content = makeEmptyBlock(tlv::Content);
@@ -177,7 +193,7 @@ security::v2::Certificate
 AuthenticationServer::generateDeviceCertificate(const Name& keyName, const Block& pubKey,
 						const security::v2::Certificate& anchor)
 {
-  std::cout << "to generate certificate for " << keyName << std::endl;
+  LOG_INFO("Generate a certificate for " << keyName);
   Name certName = Name(keyName).append("NDNCERT").appendVersion();
 
   security::v2::Certificate newCert;
@@ -196,10 +212,10 @@ AuthenticationServer::generateDeviceCertificate(const Name& keyName, const Block
     m_keyChain.sign(newCert, signingInfo);
   }
   catch (const SignatureInfo::Error& e) {
-    std::cout << "sig: " << e.what() << std::endl;
+    LOG_FAILURE("sig", e.what());
   }
   catch (const tlv::Error& e) {
-    std::cout << "tlv " << e.what() << std::endl;
+    LOG_FAILURE("tlv", e.what());
   }
 
   return newCert;

@@ -1,4 +1,5 @@
 #include "entity.hpp"
+#include "logger.hpp"
 #include <ndn-cxx/lp/tags.hpp>
 #include <algorithm>
 
@@ -17,11 +18,6 @@ Entity::Entity(const Name& name,
   , m_terminationSignalSet(m_ioService)
   , m_name(name)
 {
-  std::cout << "####################################################\n"
-	    << "## A Entity with name: " << name << " is started!\n"
-	    << "####################################################\n"
-	    << std::endl;
-
   m_identity = m_keyChain.createIdentity(m_name);
   
   if (keepRunning) {
@@ -39,7 +35,7 @@ Entity::terminate(const boost::system::error_code& error, int signalNo)
   if (error)
     return;
 
-  std::cout << "Caught signal '" << ::strsignal(signalNo) << "', exiting..." << std::endl;
+  LOG_BYEBYE(m_name, "WITH " << ::strsignal(signalNo) << " CAUGHT");
 
   for (const auto& faceId : m_createdFaces) {
     auto params = nfd::ControlParameters();
@@ -63,9 +59,6 @@ Entity::makeCommand(Name name, const ControlParameters& params,
   interest.setInterestLifetime(COMMAND_INTEREST_LIFETIME);
   interest.setMustBeFresh(true);
 
-  std::cout << "----------------------------------------\n" << interest.getName()
-	    << "\n----------------------------------------" << std::endl;
-  
   return interest;
 }
 
@@ -76,18 +69,18 @@ Entity::issueCommand(const Interest& command,
 {
 
   auto onFailure = [this] (const std::string& reason) {
-    std::cout << "command fail: " << reason << std::endl;
-    this->fail(reason);
+    LOG_FAILURE("command", " faile with " << reason);
   };
+
+  LOG_INTEREST_OUT(command);
   m_face.expressInterest(command,
 			 bind(&Entity::verifyResponse, this, _1, _2,
 			      verify, onFailure, handler),
 			 [this] (const Interest&, const lp::Nack& nack) {
-			   std::cout << nack.getReason() << std::endl;
-			   this->fail("NAC on command");
+			   LOG_FAILURE("command", " nack " << nack.getReason());
 			 },
 			 [this] (const Interest&) {
-			   this->fail("Timeout when waiting for command");
+			   LOG_FAILURE("command", " timeout ");
 			 });     
 }
 
@@ -104,8 +97,8 @@ Entity::registerCommandHandler(const Name& prefix, const Name& subPrefix,
   if (!m_handlerMaps[prefix]) {
     m_handlerMaps[prefix] = true;
     m_face.registerPrefix(prefix,
-			  bind([] { std::cout << "hehe yes" << std::endl; }),
-			  bind([] { std::cout << "hehe no" << std::endl; }));
+			  bind([name] { LOG_INFO("ready for command: " << name); }),
+			  bind([name] { LOG_FAILURE("command", "fail to register " << name); }));
   }
   m_face.setInterestFilter(name, onInterest);
 }
@@ -116,10 +109,11 @@ Entity::authorizeRequester(const Interest& interest,
 			   const CommandHandler& handler,
 			   const DataSigner& sign)
 {
-  std::cout << "receive command: " << interest << std::endl;
+  LOG_INTEREST_IN(interest);
   
   if (authorize && !authorize(interest)) {
-    return this->fail("can not verify the requester");
+    LOG_FAILURE("command", "can not verify the requester from " << interest.getName());
+    return;
   }
 
   try {
@@ -127,7 +121,7 @@ Entity::authorizeRequester(const Interest& interest,
     handler(params, bind(&Entity::replyRequest, this, interest, sign, _1));
   }
   catch (const ControlParameters::Error& e) {
-    return this->fail(e.what());
+    LOG_FAILURE("command", "can not parse the parameters: " << e.what());
   }  
 }
 
@@ -141,7 +135,7 @@ Entity::replyRequest(const Interest& interest,
     data->setContent(content);
   }
   catch (const tlv::Error& e) {
-    std::cout << e.what() << std::endl;
+    LOG_FAILURE("command", "can not set content for response: " << e.what());
   }
 
   sign(*data, m_keyChain);
@@ -151,6 +145,7 @@ Entity::replyRequest(const Interest& interest,
   data->setTag(make_shared<lp::CachePolicyTag>(policy));
 
   m_face.put(*data);
+  LOG_DATA_OUT(*data);
 }
 
 void
@@ -185,6 +180,7 @@ Entity::verifyResponse(const Interest& interest,
 		       const VerificationFailCallback& onFailure,
 		       const ResponseHandler& handler)
 {
+  LOG_DATA_IN(data);
   if (!interest.matchesData(data)) {
     return onFailure("interest and data do not match");
   }
@@ -245,8 +241,8 @@ Entity::publishCertificate(const Name& keyName, const security::v2::Certificate&
   m_certificates[certificate.getName()] = certificate;
   m_face.setInterestFilter(keyName,
 			   bind(&Entity::fetchCertificate, this, _2),
-			   bind([] { std::cout << "published" << std::endl; }),
-			   bind([] { std::cout << "not publish" << std::endl; }));
+			   bind([keyName] { LOG_INFO("certificate " << keyName << " is published"); }),
+			   bind([keyName] { LOG_FAILURE("cert", "fail to publish" << keyName); }));
 }
 
 void
@@ -265,6 +261,7 @@ Entity::fetchCertificate(const Interest& interest)
   }
   */
 
+  LOG_INTEREST_IN(interest);
   for (const auto& entry : m_certificates) {
     if (interest.matchesData(entry.second)) {
       m_face.put(entry.second);
