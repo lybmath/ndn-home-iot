@@ -3,6 +3,8 @@
 
 #include <boost/log/common.hpp>
 #include <boost/log/sources/logger.hpp>
+#include <ndn-cxx/encoding/block.hpp>
+#include <fstream>
 
 namespace ndn {
 namespace iot {
@@ -11,6 +13,11 @@ struct LoggerTimestamp
 {
 };
 
+extern std::basic_ofstream<uint8_t> globalPacketFile;
+
+void
+writeToFile(const Block& block);
+  
 std::ostream&
 operator<<(std::ostream& os, const LoggerTimestamp&);
 
@@ -41,21 +48,29 @@ operator<<(std::ostream& os, const LoggerTimestamp&);
 #define LOG_INFO(expression) \
   std::cerr << "[" << LoggerTimestamp{} << "] " << expression << std::endl;
 
-#define LOG_INTEREST_IN(interest) \
+#define LOG_INTEREST_IN(interest) {					\
   std::cerr << "[" << LoggerTimestamp{} << "] " << "received an interest:\n"	\
-            << interest << std::endl;
+            << interest << std::endl;					\
+  writeToFile((interest).wireEncode());				\
+}
 
-#define LOG_INTEREST_OUT(interest)			      \
+#define LOG_INTEREST_OUT(interest) {					\
   std::cerr << "[" << LoggerTimestamp{} << "] " << "sent out an interest:\n" \
-            << interest << std::endl;
+            << interest << std::endl;					\
+  writeToFile((interest).wireEncode());				\
+}
 
-#define LOG_DATA_IN(data) \
+#define LOG_DATA_IN(data) {						\
   std::cerr << "[" << LoggerTimestamp{} << "] " << "received a data:\n"	\
-            << data << std::endl;
+            << data << std::endl;					\
+  writeToFile((data).wireEncode());					\
+}
 
-#define LOG_DATA_OUT(data)			      \
+#define LOG_DATA_OUT(data) {						\
   std::cerr << "[" << LoggerTimestamp{} << "] " << "sent out a data:\n" \
-            << data << std::endl;
+            << data << std::endl;					\
+  writeToFile((data).wireEncode());					\
+}
   
 } // namespace iot
 } // namespace ndn

@@ -7,6 +7,27 @@
 namespace ndn {
 namespace iot {
 
+std::basic_ofstream<uint8_t> globalPacketFile;
+
+void
+writeToFile(const Block& block)
+{					
+  if (!globalPacketFile.is_open()) {				
+      globalPacketFile.open("packet.out", std::ios::out | std::ios::binary); 
+  }
+  const uint8_t* buf = block.wire();
+  size_t buf_size = block.size();
+
+  // write the size first, so the reader can be aware of how many bytes to read next
+  globalPacketFile.write(reinterpret_cast<uint8_t*>(&buf_size), sizeof(size_t));
+
+  // write the whole buf into file in the binary format
+  globalPacketFile.write(buf, buf_size);
+
+  // flush to file rather than buffered the content
+  globalPacketFile.flush();
+}
+
 std::ostream&
 operator<<(std::ostream& os, const LoggerTimestamp&)
 {

@@ -12,6 +12,7 @@
 #include <ndn-cxx/security/command-interest-signer.hpp>
 #include <ndn-cxx/security/pib/identity.hpp>
 #include <ndn-cxx/ims/in-memory-storage-fifo.hpp>
+#include <fstream>
 
 namespace ndn {
 namespace iot {

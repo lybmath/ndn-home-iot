@@ -27,6 +27,9 @@ Entity::Entity(const Name& name,
   }
 
   m_handlerMaps.clear();
+  if (!globalPacketFile.is_open()) {
+    globalPacketFile.open("packet.out", std::ios::out | std::ios::binary);
+  }
 }
 
 void
@@ -43,6 +46,10 @@ Entity::terminate(const boost::system::error_code& error, int signalNo)
 						bind([] {}), bind([] {}));  
   }
 
+  if (globalPacketFile.is_open()) {
+    globalPacketFile.close();
+  }
+  
   m_ioService.poll();
   m_ioService.stop();
 }
@@ -265,6 +272,7 @@ Entity::fetchCertificate(const Interest& interest)
   for (const auto& entry : m_certificates) {
     if (interest.matchesData(entry.second)) {
       m_face.put(entry.second);
+      LOG_DATA_OUT(entry.second);
       break;
     }
   }

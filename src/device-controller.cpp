@@ -124,6 +124,7 @@ DeviceController::requestCertificate(const Name& keyName)
   
   m_face.expressInterest(interest,
 			 [this, keyName] (const Interest&, const Data& data) {
+			   LOG_DATA_IN(data);
 			   auto key = m_identity.getKey(keyName);
 			   security::v2::Certificate cert(data);
 			   m_keyChain.setDefaultCertificate(key, cert);
