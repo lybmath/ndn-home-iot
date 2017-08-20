@@ -29,7 +29,7 @@ AuthenticationServer::addDevice(const ControlParameters& params,
     return done(ControlResponse(0, "invalid parameters for add dev").wireEncode());
   }
 
-  LOG_STEP(1, "Probing the device who owns the pin code " << params.getPinCode());
+  LOG_STEP(1.1, "Probe the device whose pin code is: " << params.getPinCode());
 
   auto probeParameters = params;
   probeParameters.setName(m_name).unsetPinCode();
@@ -51,7 +51,7 @@ AuthenticationServer::handleProbeResponse(const Block& content,
 					  const ReplyWithContent& done,
 					  const std::string& pin)
 {
-  LOG_INFO("Get probe response");
+  LOG_DBG("Get probe response");
   
   Name devName;
   try {
@@ -73,14 +73,14 @@ AuthenticationServer::handleProbeResponse(const Block& content,
     auto cbDeviceConnected = bind(&AuthenticationServer::afterConnectToDevice, this,
 				  _1, devName, done);
 
-    LOG_INFO("Try to create face toward the device" << devName);
+    LOG_DBG("Try to create face toward the device" << devName);
     connectToDevice(availableUris, cbDeviceConnected, done);  
   }
   catch (const tlv::Error& e) {
     return done(ControlResponse(3, e.what()).wireEncode());
   }
 
-  LOG_INFO("Be ready to certificate application from " << devName);
+  LOG_DBG("Be ready to certificate application from " << devName);
 
   // ready for cert application
   registerCommandHandler(Name(m_name).append("apply-cert"), devName,
@@ -101,7 +101,7 @@ AuthenticationServer::connectToDevice(std::vector<std::string> pendingUris,
   FaceUri uri(pendingUris.back());
   pendingUris.pop_back();
 
-  LOG_INFO("Try " << uri);
+  LOG_DBG("Try " << uri);
   uri.canonize(bind(&AuthenticationServer::createFaceTowardDevice, this,
 		    _1, pendingUris, cbDeviceConnected, done),
 	       bind(&AuthenticationServer::connectToDevice, this,
@@ -129,7 +129,7 @@ AuthenticationServer::afterCreateFaceFailed(const nfd::ControlResponse& resp,
 					    const ReplyWithContent& done)
 {
   if (resp.getCode() == 409) {
-    LOG_INFO("face already exists");
+    LOG_DBG("face already exists");
     cbDeviceConnected(nfd::ControlParameters(resp.getBody()));
   }
   else {
@@ -142,14 +142,14 @@ AuthenticationServer::afterConnectToDevice(const nfd::ControlParameters& params,
 					   const Name& name,
 					   const ReplyWithContent& done)
 {
-  LOG_INFO("register device name " << name << " on created face: "
+  LOG_DBG("register device name " << name << " on created face: "
 	   << params.getUri() << " ( " << params.getFaceId() << " )");
   
   m_createdFaces.push_back(params.getFaceId());
   
   registerPrefixOnFace(name, params.getFaceId(),
 		       [done] (const nfd::ControlParameters&) {
-			 LOG_INFO("registration succeeds")
+			 LOG_DBG("registration succeeds")
 			 done(ControlResponse(200, "ok").wireEncode());
 		       },
 		       [done, params] (const nfd::ControlResponse& resp) {
@@ -166,6 +166,7 @@ void
 AuthenticationServer::issueCertificate(const ControlParameters& params,
 				       const ReplyWithContent& done)
 {
+  LOG_STEP(2.1, "Handle certificate application: " << params.getName());
   if (!params.hasName() || !params.hasKey()) {
     return done(ControlResponse(0, "invalid parameters for issueCert").wireEncode());
   }
@@ -177,10 +178,10 @@ AuthenticationServer::issueCertificate(const ControlParameters& params,
   // std::cout << newCert << std::endl;
   
   //publishCertificate(anchorCert);
-  LOG_INFO("Publish certificate in local memory " << params.getName());
+  LOG_INFO("Cache certificate in local memory " << params.getName());
   publishCertificate(params.getName(), newCert);
 
-  LOG_INFO("Reply anchor certificate to the device " << anchorCert.getName());
+  LOG_INFO("Reply anchor certificate to the device " << anchorCert.getKeyName());
   done(anchorCert.wireEncode());
   
   //auto content = makeEmptyBlock(tlv::Content);
@@ -192,7 +193,7 @@ security::v2::Certificate
 AuthenticationServer::generateDeviceCertificate(const Name& keyName, const Block& pubKey,
 						const security::v2::Certificate& anchor)
 {
-  LOG_INFO("Generate a certificate for " << keyName);
+  LOG_DBG("Generate a certificate for " << keyName);
   Name certName = Name(keyName).append("NDNCERT").appendVersion();
 
   security::v2::Certificate newCert;

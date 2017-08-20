@@ -65,6 +65,24 @@ ControlParameters::setName(const Name& name)
 }
 
 bool
+ControlParameters::hasKeyName() const
+{
+  return hasFiled(tlv::iot::KeyName);
+}
+
+Name
+ControlParameters::getKeyName() const
+{
+  return Name(getFiled(tlv::iot::KeyName));
+}
+
+ControlParameters&
+ControlParameters::setKeyName(const Name& name)
+{
+  return setFiled(name.wireEncode());
+}
+
+bool
 ControlParameters::hasPinCode() const
 {
   return hasFiled(tlv::iot::PinCode);
@@ -179,13 +197,22 @@ ControlParameters::unsetFiled(uint32_t type)
 std::ostream&
 operator<<(std::ostream& os, const ControlParameters& params)
 {
-  if (params.hasName()) {
-    os << "Name: " << params.getName();
+  os << "/[";
+  if (params.hasKey()) {
+    if (params.hasName()) {
+      os << "KeyName=" << params.getName();
+    }
   }
-  if (params.hasPinCode()) {
-    os << "\nPinCode: " << params.getPinCode();
+  else {
+    if (params.hasName()) {
+      os << " Name=" << params.getName();
+    }
+    if (params.hasPinCode()) {
+      os << "PinCode=" << params.getPinCode();
+    }
   }
 
+  os << "]";
   return os;
 }
 

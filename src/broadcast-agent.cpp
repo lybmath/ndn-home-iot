@@ -108,7 +108,7 @@ BroadcastAgent::setStrategy(const Name& prefix,
   m_controller.start<nfd::StrategyChoiceSetCommand>(
     parameters,
     bind([cbAfterRegistration] {
-	LOG_INFO("Multicast faces are ready");
+	LOG_DBG("Multicast faces are ready");
 	cbAfterRegistration();
       }),
     [this] (const nfd::ControlResponse& resp) {

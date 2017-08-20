@@ -144,7 +144,7 @@ Entity::verifyInterestByKey(const Interest& interest,
   }
 
   if (m_certificates.empty()) {
-    LOG_INFO("no trust anchor to verify this request");
+    LOG_DBG("no trust anchor to verify this request");
     return;    
   }
 
@@ -179,12 +179,8 @@ Entity::verifyDataByKey(const Data& data,
   }
 
   if (m_certificates.empty()) {
-    LOG_INFO("no trust anchor to verify this request");
+    LOG_DBG("no trust anchor to verify this request");
     return;    
-  }
-
-  for (auto x : m_certificates) {
-    LOG_INFO("key = " << x.first << "\nvalue = " << x.second);
   }
 
   if (m_certificates.find(klName) != m_certificates.end()) {
@@ -346,11 +342,11 @@ Entity::publishCertificate(const Name& keyName, const security::v2::Certificate&
   }
 
   m_certificates[certificate.getName()] = certificate;
-  LOG_INFO("certificate " << keyName << " is published");
+  LOG_DBG("certificate " << keyName << " is published");
 	   
   m_face.setInterestFilter(keyName,
 			   bind(&Entity::fetchCertificate, this, _2),
-			   bind([keyName] { LOG_INFO("list to requests to this certificate"); }),
+			   bind([keyName] { LOG_DBG("listen to requests to this certificate"); }),
 			   bind([keyName] { LOG_FAILURE("cert", "fail to listen" << keyName); }));
 }
 
@@ -369,6 +365,8 @@ Entity::fetchCertificate(const Interest& interest)
     std::cout << "can not find certificate" << interest.getName() << std::endl;
   }
   */
+
+  LOG_STEP(3.2, "Fetch and supply certificate: " << interest.getName());
 
   LOG_INTEREST_IN(interest);
   for (const auto& entry : m_certificates) {

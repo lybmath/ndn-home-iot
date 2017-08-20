@@ -1,13 +1,125 @@
 #include "logger.hpp"
+#include "control-parameters.hpp"
 #include <ndn-cxx/util/time.hpp>
 #include <cinttypes>
 #include <stdio.h>
 #include <type_traits>
+#include <ndn-cxx/encoding/tlv.hpp>
+#include <ndn-cxx/signature-info.hpp>
 
 namespace ndn {
 namespace iot {
 
 std::basic_ofstream<uint8_t> globalPacketFile;
+
+static std::string
+getKey(const SignatureInfo& info)
+{
+  std::string type = "";
+  std::string key = "";
+  switch(info.getSignatureType()) {
+  case 129: key = "HMAC"; break;
+  case 0: type = "DigestSha256"; break;
+  case 1: type = "SignatureSha256WithRsa"; break;
+  case 3: type = "SignatureSha256WithEcdsa"; break;
+  default: type = "NOT DEFIEND"; break;
+  }
+
+  if (info.getSignatureType() != 129) {
+    if (info.hasKeyLocator()) {
+      const auto& kl = info.getKeyLocator();
+      if (kl.getType() == KeyLocator::KeyLocator_Name) {
+	key = kl.getName().toUri();
+      }
+    }
+  }
+
+  return key;
+}
+
+void
+printInfoFromInterest(const std::string& msg, const Interest& interest)
+{
+  // std::cerr << "[" << LoggerTimestamp{} << "] " << msg << ":\n"
+  // cout << "\033[1;31mbold red text\033[0m\n";
+  Name name = interest.getName();
+  if (name[0] == name::Component("localhost")) return;
+
+  bool hasSignature = false;
+  try {
+    auto block = name.get(-2).blockFromValue();
+    if (block.type() == tlv::SignatureInfo) {
+      hasSignature = true;
+    }
+  }
+  catch (const tlv::Error&) {
+  }
+  
+  if (hasSignature) {
+    SignatureInfo info(name.get(-2).blockFromValue());
+    auto key = getKey(info);
+    
+    ControlParameters params;
+    try {
+      params.wireDecode(name.get(-5).blockFromValue());
+      std::cerr << "[" << LoggerTimestamp{} << "][" << msg << "]:\n"
+		<< "\033[1;31m" << name.getPrefix(-5) << "\033[0m" << params << "\n"
+		<< "SIGNED BY \033[1m " << key << "\033[0m" << std::endl;
+    }
+    catch (const tlv::Error&) {
+      std::cerr << "[" << LoggerTimestamp{} << "][" << msg << "]:\n"
+		<< "\033[1;31m" << name.getPrefix(-4) << "\033[0m\n"
+		<< "SIGNED BY \033[1m " << key << "\033[0m" << std::endl;
+    }
+  }
+  else {
+    std::cerr << "[" << LoggerTimestamp{} << "][" << msg << "]:\n"
+	      << "\033[31m" << name << "\033[0m" << std::endl;
+  }
+}
+
+void printInfoFromData(const std::string& msg, const Data& data)
+{
+  Name name = data.getName();
+  if (name[0] == name::Component("localhost")) return;
+  
+  bool hasSignature = false;
+  try {
+    auto block = name.get(-3).blockFromValue();
+    if (block.type() == tlv::SignatureInfo) {
+      hasSignature = true;
+    }
+  }
+  catch (const tlv::Error&) {
+  }
+
+  if (!hasSignature) {
+    std::cerr << "[" << LoggerTimestamp{} << "][" << msg << "]:\n"
+	      << name << std::endl;
+    return;
+  }
+
+  SignatureInfo info(name.get(-3).blockFromValue());
+  auto key = getKey(info);
+
+  SignatureInfo dataSigInfo = data.getSignature().getSignatureInfo();
+  auto dataKey = getKey(dataSigInfo);
+  
+  ControlParameters params;
+  try {
+    params.wireDecode(name.get(-6).blockFromValue());
+    std::cerr << "[" << LoggerTimestamp{} << "][" << msg << "]:\n"
+	      << "\033[1;32m" << name.getPrefix(-6) << "\033[0m" << params
+	      << "[SIG=" << key << "][V=" << name.get(-1).toVersion() << "]\n"
+	      << "SIGNED BY \033[1m " << dataKey << "\033[0m" << std::endl;
+  }
+  catch (const tlv::Error&) {
+    std::cerr << "[" << LoggerTimestamp{} << "][" << msg << "]:\n"
+	      << "\033[1;32m" << name.getPrefix(-5) << "\033[0m"
+	      << "[SIG=" << key << "][V=" << name.get(-1).toVersion() << "]\n"
+	      << "SIGNED BY \033[1m " << dataKey << "\033[0m" << std::endl;
+  }  
+}
 
 void
 writeToFile(const Block& block)

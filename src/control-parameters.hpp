@@ -70,6 +70,15 @@ public:
   setName(const Name& name);
 
   bool
+  hasKeyName() const;
+
+  Name
+  getKeyName() const;
+
+  ControlParameters&
+  setKeyName(const Name& name);
+
+  bool
   hasPinCode() const;
 
   std::string
