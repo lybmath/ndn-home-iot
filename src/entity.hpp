@@ -3,6 +3,7 @@
 
 #include "control-parameters.hpp"
 #include "broadcast-agent.hpp"
+#include "security-options.hpp"
 #include "hmac-helper.hpp"
 
 #include <ndn-cxx/util/scheduler.hpp>
@@ -12,6 +13,8 @@
 #include <ndn-cxx/security/command-interest-signer.hpp>
 #include <ndn-cxx/security/pib/identity.hpp>
 #include <ndn-cxx/ims/in-memory-storage-fifo.hpp>
+#include <ndn-cxx/security/v2/validator.hpp>
+
 #include <fstream>
 
 namespace ndn {
@@ -44,7 +47,8 @@ public:
 public: // command
   typedef boost::function<void(const Block& block)> ReplyWithContent;
   typedef boost::function<void(const ControlParameters& parameters,
-			       const ReplyWithContent& done)> CommandHandler;
+			       const ReplyWithContent& done,
+			       SecurityOptions options)> CommandHandler;
   typedef boost::function<bool(const Interest& interset)> Authorization;
   typedef boost::function<bool(const Data& data)> Verification;
   typedef boost::function<void(const std::string& reason)> VerificationFailCallback;
@@ -65,12 +69,11 @@ public: // command
       keyChain.sign(data);
     };
   }
-  
+
   void
   registerCommandHandler(const Name& prefix, const Name& subPrefix,
 			 const CommandHandler& handler,
-			 const Authorization& authorize = bind([] { return true; }),
-			 const DataSigner& sign = Entity::makeDefaultDataSigner());
+			 SecurityOptions options = SecurityOptions());
 
   Interest
   makeCommand(Name name, const ControlParameters& params,
@@ -109,11 +112,27 @@ public: // operation
   fetchCertificate(const Interest& interest);
 
 private:
+  typedef boost::function<void(SecurityOptions options)> AuthorizationCallback;
+  
   void
   authorizeRequester(const Interest& interest,
-		     const Authorization& authorize,
 		     const CommandHandler& handler,
-		     const DataSigner& sign);
+		     SecurityOptions options);
+
+  void
+  verifyInterestByKey(const Interest& interset,
+		      SecurityOptions options,
+		      const AuthorizationCallback& cbAfterAuthorization);
+
+  void
+  verifyDataByKey(const Data& data,
+		  SecurityOptions options,
+		  const AuthorizationCallback& cbAfterAuthorization);
+
+  void
+  afterAuthorization(const Interest& interest,
+		     const CommandHandler& handler,
+		     SecurityOptions options);
 
   void
   verifyResponse(const Interest& interest,
@@ -124,9 +143,9 @@ private:
 
   void
   replyRequest(const Interest& interest,
-	       const DataSigner& sign,
+	       SecurityOptions options,
 	       const Block& content);
-
+  
 public:
   void
   fail(uint32_t code, const std::string& msg)
@@ -140,6 +159,16 @@ public:
     std::cerr << "Entity " << this->getName() << " failed: " << msg << std::endl;
   }
 
+private:
+  bool
+  getKeyLocatorName(const Data& data, Name& name);
+
+  bool
+  getKeyLocatorName(const Interest& interest, Name& name);
+
+  bool
+  getKeyLocatorName(const SignatureInfo& si, Name& name);
+  
 protected:
   boost::asio::io_service m_ioService;
   Face m_face;

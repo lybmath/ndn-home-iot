@@ -6,7 +6,7 @@ namespace iot {
 int
 main()
 {
-  ndn::iot::AuthenticationServer as("/shannon/as");
+  ndn::iot::AuthenticationServer as("/iot/shannon/as");
   as.run();
   return 0;
 }

@@ -18,25 +18,32 @@ public:
   BroadcastAgent(Face& face,
 		 KeyChain& keyChain,
 		 nfd::Controller& controller);
+
+  typedef std::function<void(void)> registerTopPrefixCallback;
   
   void
   registerTopPrefix(const Name& prefix,
-		    const nfd::ControlParameters& params = nfd::ControlParameters());
+		    const registerTopPrefixCallback& cbAfterRegistration = [] {});
 
   void
   broadcast(const Interest& interest,
-	    const DataCallback& cbOnData);
+	    const DataCallback& cbOnData,
+	    const NackCallback& cbOnNack,
+	    const TimeoutCallback& cbOnTimeout);
 
 private: 
   void
   registerPrefixToFaces(const nfd::ControlParameters& params,
-			const std::vector<nfd::FaceStatus>& dataset);
+			const std::vector<nfd::FaceStatus>& dataset,
+			const registerTopPrefixCallback& cbAfterRegistration);
 
   void
-  afterPrefixRegistration(const Name& prefix);
+  afterPrefixRegistration(const Name& prefix,
+			  const registerTopPrefixCallback& cbAfterRegistration);
 
   void
-  setStrategy(const Name& prefix);
+  setStrategy(const Name& prefix,
+	      const registerTopPrefixCallback& cbAfterRegistration);
   
 private:
   Face& m_face;

@@ -4,6 +4,7 @@
 #include "entity.hpp"
 #include <ndn-cxx/mgmt/nfd/face-status.hpp>
 #include <ndn-cxx/mgmt/nfd/face-monitor.hpp>
+#include <ndn-cxx/face.hpp>
 
 namespace ndn {
 namespace iot {
@@ -17,10 +18,17 @@ public:
 public:
   void
   handleProbe(const ControlParameters& parameters,
-	      const ReplyWithContent& done);
+	      const ReplyWithContent& done,
+	      SecurityOptions options);
 
   void
   onCertificateInterest(const Interest& interest);
+
+  void
+  discovery();
+
+  void
+  onDiscoveredDevice(const Data& data);
 
 private:
   void
@@ -46,6 +54,7 @@ private:
 private:
   std::string m_pin;
   nfd::FaceMonitor m_faceMonitor;
+  uint64_t m_asFaceId;
 };
 
 } // namespace iot

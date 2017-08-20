@@ -17,7 +17,7 @@ AuthenticationServer::AuthenticationServer(const Name& name)
   m_agent.registerTopPrefix(PROBE_DEVICE_PREFIX);
 
   registerCommandHandler("localhost", "add-device",
-			 bind(&AuthenticationServer::addDevice, this, _1, _2));
+  			 bind(&AuthenticationServer::addDevice, this, _1, _2));
 }
 
 void
@@ -81,12 +81,11 @@ AuthenticationServer::handleProbeResponse(const Block& content,
   }
 
   LOG_INFO("Be ready to certificate application from " << devName);
-    
+
   // ready for cert application
   registerCommandHandler(Name(m_name).append("apply-cert"), devName,
 			 bind(&AuthenticationServer::issueCertificate, this, _1, _2),
-			 bind(&hmac::verifyInterest, _1, pin),
-			 bind(&hmac::signData, _1, pin));
+			 SecurityOptions(pin));
 }
 
 void

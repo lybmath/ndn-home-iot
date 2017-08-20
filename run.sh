@@ -4,19 +4,33 @@ _ARG_MAKE_SET=0
 _ARG_SERVER_SET=0
 _ARG_DEVICE_SET=0
 
+function run_server() {
+    nfd-stop
+    nohup nfd-start &
+    sleep 1
+    ./server.app $@
+}
+
+function run_device() {
+    nfd-stop
+    nohup nfd-start &
+    sleep 1
+    ./device.app $@
+}
+
 for i in "$@"
 do
 case $i in
-    -s|--sync)
-	_ARG_SERVER_SET=1
+    -S|--server)
         shift
+	run_server $@ && exit
         ;;
-    -d|--delete)
-        _ARG_DEVICE_SET=1
+    -D|--device)
         shift
+	run_device $@ && exit
         ;;
     -m|--make)
-        _ARG_MAKE_SET=1
+        bash /vagrant/VagrantCommand.sh -s && make all
         shift # past argument=value
         ;;
     *)
@@ -24,21 +38,3 @@ case $i in
     ;;
 esac
 done
-
-function run_server() {
-    nfd-stop
-    nohup nfd-start &
-    sleep 1
-    ./server.app
-}
-
-function run_device() {
-    nfd-stop
-    nohup nfd-start &
-    sleep 1
-    ./device.app
-}
-
-[[ ${_ARG_MAKE_SET} -eq 1 ]] && bash /vagrant/VagrantCommand.sh -s && make all
-[[ ${_ARG_SERVER_SET} -eq 1 ]] && run_server && exit
-[[ ${_ARG_DEVICE_SET} -eq 1 ]] && run_device && exit

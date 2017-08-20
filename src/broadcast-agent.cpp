@@ -18,21 +18,21 @@ BroadcastAgent::BroadcastAgent(Face& face,
 
 void
 BroadcastAgent::registerTopPrefix(const Name& prefix,
-				  const nfd::ControlParameters& params)
+				  const registerTopPrefixCallback& cbAfterRegistration)
 {
   // TODO check overlap
   nfd::FaceQueryFilter filter;
   filter.setLinkType(nfd::LINK_TYPE_MULTI_ACCESS);
 
-  nfd::ControlParameters registerParameters = params;
-  registerParameters
+  nfd::ControlParameters registerParameters = nfd::ControlParameters()
     .setName(prefix)
     .setCost(1)
     .setExpirationPeriod(time::milliseconds::max());
   
   m_controller.fetch<nfd::FaceQueryDataset>(
     filter,
-    bind(&BroadcastAgent::registerPrefixToFaces, this, registerParameters, _1),
+    bind(&BroadcastAgent::registerPrefixToFaces, this,
+	 registerParameters, _1, cbAfterRegistration),
     [] (uint32_t code, const std::string& reason) {
       LOG_FAILURE("broadcast", "Error " << code << "when fetching multicast faces: " << reason);
     });
@@ -40,23 +40,18 @@ BroadcastAgent::registerTopPrefix(const Name& prefix,
 
 void
 BroadcastAgent::broadcast(const Interest& interest,
-			  const DataCallback& cbOnData)
+			  const DataCallback& cbOnData,
+			  const NackCallback& cbOnNack,
+			  const TimeoutCallback& cbOnTimeout)
 {
-  auto onNack = [this] (const Interest& interest, const lp::Nack& nack) {
-    LOG_FAILURE("broadcast", "get nack [" << nack.getReason() << "]"
-		<< " for interset " << interest.getName());
-  };
-  auto onTimeout = [this] (const Interest& interest) {
-    LOG_FAILURE("broadcast", "interest is timeout: " << interest.getName());
-  };
-
-  m_face.expressInterest(interest, cbOnData, onNack, onTimeout);
+  m_face.expressInterest(interest, cbOnData, cbOnNack, cbOnTimeout);
   LOG_INTEREST_OUT(interest);
 }
 
 void
 BroadcastAgent::registerPrefixToFaces(const nfd::ControlParameters& params,
-				      const std::vector<nfd::FaceStatus>& dataset)
+				      const std::vector<nfd::FaceStatus>& dataset,
+				      const registerTopPrefixCallback& cbAfterRegistration)
 {
   if (dataset.empty()) {
     LOG_FAILURE("broadcast", "No multi-access face available");
@@ -73,27 +68,28 @@ BroadcastAgent::registerPrefixToFaces(const nfd::ControlParameters& params,
     
     m_controller.start<nfd::RibRegisterCommand>(
       registerParameters.setFaceId(faceStatus.getFaceId()),
-      [this, prefix] (const nfd::ControlParameters&) {
+      [this, prefix, cbAfterRegistration] (const nfd::ControlParameters&) {
 	++m_nRegSuccess;
-        afterPrefixRegistration(prefix);
+        afterPrefixRegistration(prefix, cbAfterRegistration);
       },
-      [this, prefix, faceStatus] (const nfd::ControlResponse& resp) {
+      [this, prefix, faceStatus, cbAfterRegistration] (const nfd::ControlResponse& resp) {
 	LOG_FAILURE("broadcast", "Error " << resp.getCode() << " in registering route to ["
 		    << faceStatus.getRemoteUri() << "]: " << resp.getText());
 	++m_nRegFailure;
-        afterPrefixRegistration(prefix);
+        afterPrefixRegistration(prefix, cbAfterRegistration);
       });
   }
 }
   
 void
-BroadcastAgent::afterPrefixRegistration(const Name& prefix)
+BroadcastAgent::afterPrefixRegistration(const Name& prefix,
+					const registerTopPrefixCallback& cbAfterRegistration)
 {
   if (m_nRegSuccess + m_nRegFailure < m_nRegs) {
     return; // continue waiting
   }
   if (m_nRegSuccess > 0) {
-    this->setStrategy(prefix);
+    this->setStrategy(prefix, cbAfterRegistration);
   }
   else {
     LOG_FAILURE("broadcast", "Cannot register prefix on any multicast face");
@@ -101,7 +97,8 @@ BroadcastAgent::afterPrefixRegistration(const Name& prefix)
 }
 
 void
-BroadcastAgent::setStrategy(const Name& prefix)
+BroadcastAgent::setStrategy(const Name& prefix,
+			    const registerTopPrefixCallback& cbAfterRegistration)
 {
   nfd::ControlParameters parameters;
   parameters
@@ -110,8 +107,9 @@ BroadcastAgent::setStrategy(const Name& prefix)
   
   m_controller.start<nfd::StrategyChoiceSetCommand>(
     parameters,
-    bind([] {
+    bind([cbAfterRegistration] {
 	LOG_INFO("Multicast faces are ready");
+	cbAfterRegistration();
       }),
     [this] (const nfd::ControlResponse& resp) {
       LOG_FAILURE("broadcast", "Error " << resp.getCode() << "when setting multicast strategy: "

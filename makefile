@@ -7,8 +7,11 @@ LIBS := `pkg-config --libs libndn-cxx`
 
 MAKE_OBJ_DIR := $(shell mkdir -p $(ODIR))
 SRC = $(notdir $(wildcard $(SDIR)/*.cpp))
-OBJ = $(patsubst %.cpp, $(ODIR)/%.o, $(SRC))
+OBJ := $(patsubst %.cpp, $(ODIR)/%.o, $(SRC))
 DEPS = $(OBJ:.o=.cpp.d)
+
+.INTERMEDIATE: $(OBJ)
+.PRECIOUS: $(OBJ)
 
 debug:
 	@echo $(CFLAGS)

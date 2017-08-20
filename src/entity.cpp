@@ -94,47 +94,133 @@ Entity::issueCommand(const Interest& command,
 void
 Entity::registerCommandHandler(const Name& prefix, const Name& subPrefix,
 			       const CommandHandler& handler,
-			       const Authorization& authorize,
-			       const DataSigner& sign)
+			       SecurityOptions options)
 {
   InterestCallback onInterest = bind(&Entity::authorizeRequester, this, _2,
-				     authorize, handler, sign);
+				     handler, options);
   auto name = Name(prefix).append(subPrefix);
-  
+
   if (!m_handlerMaps[prefix]) {
     m_handlerMaps[prefix] = true;
     m_face.registerPrefix(prefix,
-			  bind([name] { LOG_INFO("ready for command: " << name); }),
+			  bind([name] {}),
 			  bind([name] { LOG_FAILURE("command", "fail to register " << name); }));
   }
+
   m_face.setInterestFilter(name, onInterest);
 }
 
 void
 Entity::authorizeRequester(const Interest& interest,
-			   const Authorization& authorize,
 			   const CommandHandler& handler,
-			   const DataSigner& sign)
+			   SecurityOptions options)
 {
   LOG_INTEREST_IN(interest);
-  
-  if (authorize && !authorize(interest)) {
-    LOG_FAILURE("command", "can not verify the requester from " << interest.getName());
+
+  if (options.getVerificationOption() == SecurityOptions::NOT_SET) {
+    return afterAuthorization(interest, handler, options);
+  }
+
+  if (options.getVerificationOption() & SecurityOptions::HMAC) {
+    if (hmac::verifyInterest(interest, options.getPinCode())) {
+      options.setVerificationType(SecurityOptions::HMAC);
+      return afterAuthorization(interest, handler, options);
+    }
+  }
+
+  verifyInterestByKey(interest, options,
+		      bind(&Entity::afterAuthorization, this, interest, handler, _1));
+}
+
+void
+Entity::verifyInterestByKey(const Interest& interest,
+			    SecurityOptions options,
+			    const AuthorizationCallback& cbAfterAuthorization)
+{
+  Name klName;
+  if (!getKeyLocatorName(interest, klName)) {
+    LOG_FAILURE("command", "can not get kl name " << klName);
     return;
   }
 
+  if (m_certificates.empty()) {
+    LOG_INFO("no trust anchor to verify this request");
+    return;    
+  }
+
+  if (m_certificates.find(klName) != m_certificates.end()) {
+    options.setVerificationType(SecurityOptions::IDENTITY);
+    cbAfterAuthorization(options);
+    return;
+  }
+
+  DataCallback onData = bind(&Entity::verifyDataByKey, this, _2, options, cbAfterAuthorization);
+  NackCallback onNack = [klName] (const Interest&, const lp::Nack& nack) {
+    LOG_FAILURE("verify by key", "Nack (" << nack.getReason() << ") on fetching cert " << klName);
+  };
+  TimeoutCallback onTimeout = [klName] (const Interest&) {
+    LOG_FAILURE("verify by key", "Timeout on fetching cert " << klName);
+  };
+  
+  m_face.expressInterest(Interest(klName), onData, onNack, onTimeout);
+}
+
+void
+Entity::verifyDataByKey(const Data& data,
+			SecurityOptions options,
+			const AuthorizationCallback& cbAfterAuthorization)
+{
+  LOG_DATA_IN(data);
+
+  Name klName;
+  if (!getKeyLocatorName(data, klName)) {
+    LOG_FAILURE("command", "can not get kl name " << klName);
+    return;
+  }
+
+  if (m_certificates.empty()) {
+    LOG_INFO("no trust anchor to verify this request");
+    return;    
+  }
+
+  for (auto x : m_certificates) {
+    LOG_INFO("key = " << x.first << "\nvalue = " << x.second);
+  }
+
+  if (m_certificates.find(klName) != m_certificates.end()) {
+    options.setVerificationType(SecurityOptions::IDENTITY);
+    cbAfterAuthorization(options);
+    return;
+  }
+
+  DataCallback onData = bind(&Entity::verifyDataByKey, this, _2, options, cbAfterAuthorization);
+  NackCallback onNack = [klName] (const Interest&, const lp::Nack& nack) {
+    LOG_FAILURE("verify by key", "Nack (" << nack.getReason() << ") on fetching cert " << klName);
+  };
+  TimeoutCallback onTimeout = [klName] (const Interest&) {
+    LOG_FAILURE("verify by key", "Timeout on fetching cert " << klName);
+  };
+  
+  m_face.expressInterest(Interest(klName), onData, onNack, onTimeout);
+}
+
+void
+Entity::afterAuthorization(const Interest& interest,
+			   const CommandHandler& handler,
+			   SecurityOptions options)
+{
   try {
     auto params = ControlParameters::fromCommandInterest(interest);
-    handler(params, bind(&Entity::replyRequest, this, interest, sign, _1));
+    handler(params, bind(&Entity::replyRequest, this, interest, options, _1), options);
   }
   catch (const ControlParameters::Error& e) {
     LOG_FAILURE("command", "can not parse the parameters: " << e.what());
-  }  
+  } 
 }
 
 void
 Entity::replyRequest(const Interest& interest,
-		     const DataSigner& sign,
+		     SecurityOptions options,
 		     const Block& content)
 {
   auto data = make_shared<Data>(Name(interest.getName()).appendVersion());
@@ -145,7 +231,15 @@ Entity::replyRequest(const Interest& interest,
     LOG_FAILURE("command", "can not set content for response: " << e.what());
   }
 
-  sign(*data, m_keyChain);
+  if (options.getSigningOption() & SecurityOptions::HMAC) {
+    hmac::signData(*data, options.getPinCode());
+  }
+  else if (options.getSigningOption() & SecurityOptions::IDENTITY) {
+    m_keyChain.sign(*data);
+  }
+  else {
+    m_keyChain.sign(*data);
+  }
 
   lp::CachePolicy policy;
   policy.setPolicy(lp::CachePolicyType::NO_CACHE);
@@ -162,7 +256,13 @@ Entity::broadcast(const Interest& interest,
 		  const VerificationFailCallback& onFailure)
 {
   m_agent.broadcast(interest,
-		    bind(&Entity::verifyResponse, this, _1, _2, verify, onFailure, handler));
+		    bind(&Entity::verifyResponse, this, _1, _2, verify, onFailure, handler),
+		    [] (const Interest&, const lp::Nack& nack) {
+		      LOG_FAILURE("broadcast", "NACK: " << nack.getReason());
+		    },
+		    [] (const Interest&) {
+		      LOG_FAILURE("broadcast", "TIMEOUT");
+		    });
 }
 
 void
@@ -246,10 +346,12 @@ Entity::publishCertificate(const Name& keyName, const security::v2::Certificate&
   }
 
   m_certificates[certificate.getName()] = certificate;
+  LOG_INFO("certificate " << keyName << " is published");
+	   
   m_face.setInterestFilter(keyName,
 			   bind(&Entity::fetchCertificate, this, _2),
-			   bind([keyName] { LOG_INFO("certificate " << keyName << " is published"); }),
-			   bind([keyName] { LOG_FAILURE("cert", "fail to publish" << keyName); }));
+			   bind([keyName] { LOG_INFO("list to requests to this certificate"); }),
+			   bind([keyName] { LOG_FAILURE("cert", "fail to listen" << keyName); }));
 }
 
 void
@@ -276,6 +378,51 @@ Entity::fetchCertificate(const Interest& interest)
       break;
     }
   }
+}
+
+bool
+Entity::getKeyLocatorName(const SignatureInfo& si, Name& name)
+{
+  if (!si.hasKeyLocator()) {
+    name = Name("missing keylocator");
+    return false;
+  }
+
+  const KeyLocator& kl = si.getKeyLocator();
+  if (kl.getType() != KeyLocator::KeyLocator_Name) {
+    name = Name("not a name");
+    return false;
+  }
+
+  name = kl.getName();
+  return true;
+}
+
+bool
+Entity::getKeyLocatorName(const Data& data, Name& name)
+{
+  return getKeyLocatorName(data.getSignature().getSignatureInfo(), name);
+}
+
+bool
+Entity::getKeyLocatorName(const Interest& interest, Name& name)
+{
+  Name interestName = interest.getName();
+  if (interestName.size() < signed_interest::MIN_SIZE) {
+    name = Name("too short");
+    return false;
+  }
+
+  SignatureInfo si;
+  try {
+    si.wireDecode(interestName.at(signed_interest::POS_SIG_INFO).blockFromValue());
+  }
+  catch (const tlv::Error& e) {
+    name = Name(e.what());
+    return false;
+  }
+
+  return getKeyLocatorName(si, name);
 }
 
 } // namespace iot
